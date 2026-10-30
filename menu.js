@@ -67,7 +67,7 @@ const CSS = `
 #nx .tabs .tab { flex: 1; display: grid; place-items: center; font-weight: 700; font-size: 17px; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; border-radius: 6px; margin: 0 2px; }
 #nx .tabs .tab:hover { background: rgba(255,255,255,.06); }
 #nx .tabs .tab.on { color: var(--nx-ink); background: var(--nx-or); }
-#nx .tiles { flex: 1; display: grid; grid-template-columns: 2.7fr 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 14px; min-height: 0; }
+#nx .tiles { flex: 1; display: grid; grid-template-columns: 2fr 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 14px; min-height: 0; }
 #nx .tile { position: relative; overflow: hidden; border-radius: 6px; border: 2px solid rgba(255,255,255,.18); cursor: pointer; background: #222; }
 #nx .tile .im { position: absolute; inset: 0; background: center/cover; }
 #nx .tile:hover { border-color: var(--nx-or); }
@@ -196,8 +196,8 @@ export function createMenu(api) {
   const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
   const root = document.createElement('div'); root.id = 'nx'; document.body.appendChild(root);
   let lastTab = null, screen = 'title', tab = 'play', section = 'vehicle', from = 'title', isOpen = false, wasPaused = false, query = '';
-  const pick = { map: api.boot.map, vehicle: 'police', paint: null, night: false, traffic: api.boot.traffic }; // what Drive will launch
-  const syncPick = () => Object.assign(pick, { map: api.boot.map, ...api.current(), traffic: api.boot.traffic });
+  const pick = { map: api.boot.map, vehicle: 'police', paint: null, night: false, traffic: api.boot.traffic, online: false }; // what Drive will launch
+  const syncPick = (online = api.net.status() === 'online') => Object.assign(pick, { map: api.boot.map, ...api.current(), traffic: api.boot.traffic, online });
   const specCache = {};
   const specs = (id) => (specCache[id] ||= api.specs(id));
   const ids = Object.keys(VEHICLES);
@@ -208,10 +208,10 @@ export function createMenu(api) {
   const pill = () => { const n = api.current(), v = VEHICLES[n.vehicle]; return `<div class="pill"><div class="av" style="background-image:url(${v.img})"></div><div><b>${esc(v.name.toUpperCase())}</b></div></div>`; };
   const header = () => `<div class="top">${LOGO}${pill()}</div>`;
   // breadcrumb trail: Freeroam > Map selector > Car selector; every step is a link, the current one is white
-  const crumb = (active) => {
+  const crumb = (active) => { const MODE = pick.online ? 'Multiplayer' : 'Freeroam';
     const chev = '<svg class="ic sep" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
-    const steps = [['home', 'Freeroam'], ['maps', 'Map selector'], ['cars', 'Car selector']];
-    return `<div class="crumb"><div class="sq">${icon('mountain')}</div><nav>${steps.map(([k, l]) => `<span data-go="${k}" class="${active === k ? 'on' : ''}">${l}</span>`).join(chev)}</nav></div>`;
+    const steps = [['home', MODE], ['maps', 'Map selector'], ['cars', 'Car selector']];
+    return `<div class="crumb"><div class="sq">${icon(pick.online ? 'globe' : 'mountain')}</div><nav>${steps.map(([k, l]) => `<span data-go="${k}" class="${active === k ? 'on' : ''}">${l}</span>`).join(chev)}</nav></div>`;
   };
 
   function seg(opts, cur, on) {
@@ -263,13 +263,15 @@ export function createMenu(api) {
           ${tile('free', 'ui/map_grid.jpg', 'mountain', 'Freeroam', '')}
           ${tile('touge', 'ui/map_touge.jpg', 'curve', 'Touge Run', '')}
           ${tile('track', 'ui/map_proto.jpg', 'flag', 'Test Track', '')}
+          ${tile('mp', 'ui/map_flat.jpg', 'globe', 'Multiplayer', api.net.status() === 'online' ? `Online · ${api.net.count() + 1} on this map` : '')}
           ${tile('patrol', 'ui/patrol.jpg', 'badge', 'Police Patrol', '')}
-          ${tile('continue', MAPS[api.boot.map].img, 'play', 'Continue', `<b>${esc(MAPS[api.boot.map].name)}</b> · ${esc(VEHICLES[cur.vehicle].name)} · ${cur.night ? 'Night' : 'Day'}`, 'grid-column: 2 / 4')}
+          ${tile('continue', MAPS[api.boot.map].img, 'play', 'Continue', `<b>${esc(MAPS[api.boot.map].name)}</b> · ${esc(VEHICLES[cur.vehicle].name)}`)}
         </div>`);
-        tiles.querySelector('[data-t=free]').onclick = () => { syncPick(); go('maps', 'title'); };
-        tiles.querySelector('[data-t=touge]').onclick = () => api.launch({ map: 'touge', vehicle: 'mustang', paint: null, night: false, traffic: api.boot.traffic });
-        tiles.querySelector('[data-t=track]').onclick = () => api.launch({ map: 'proto', vehicle: 'mustang', paint: null, night: false, traffic: api.boot.traffic });
-        tiles.querySelector('[data-t=patrol]').onclick = () => api.launch({ map: 'flat', vehicle: 'police', paint: null, night: true, traffic: Math.max(6, api.boot.traffic) });
+        tiles.querySelector('[data-t=free]').onclick = () => { syncPick(false); go('maps', 'title'); };
+        tiles.querySelector('[data-t=mp]').onclick = () => { syncPick(true); go('maps', 'title'); };
+        tiles.querySelector('[data-t=touge]').onclick = () => api.launch({ map: 'touge', vehicle: 'mustang', paint: null, night: false, traffic: api.boot.traffic, online: false });
+        tiles.querySelector('[data-t=track]').onclick = () => api.launch({ map: 'proto', vehicle: 'mustang', paint: null, night: false, traffic: api.boot.traffic, online: false });
+        tiles.querySelector('[data-t=patrol]').onclick = () => api.launch({ map: 'flat', vehicle: 'police', paint: null, night: true, traffic: Math.max(6, api.boot.traffic), online: false });
         tiles.querySelector('[data-t=continue]').onclick = close;
         s.appendChild(tiles);
       } else if (tab === 'garage') {
@@ -304,7 +306,7 @@ export function createMenu(api) {
       const time = h('<div class="ctl"><small>Time</small></div>');
       time.appendChild(seg([[false, 'Day'], [true, 'Night']], pick.night, (v) => { pick.night = v; }));
       drops.appendChild(time);
-      if (m.traffic) {
+      if (m.traffic && !pick.online) {
         const tr = h('<div class="ctl"><small>Traffic</small></div>');
         tr.appendChild(slider(0, 12, 1, pick.traffic, (v) => v + ' cars', (v) => { pick.traffic = v; }));
         drops.appendChild(tr);
@@ -343,7 +345,7 @@ export function createMenu(api) {
       c.onclick = () => { if (pick.vehicle !== id) { pick.vehicle = id; pick.paint = null; } render(); }; list.appendChild(c);
     }
     const m = MAPS[pick.map];
-    const mini = h(`<div class="mapmini" style="background-image:url(${m.img})"><b>${esc(m.name)}</b><div class="tm"><div>${icon(pick.night ? 'moon' : 'sun')}${pick.night ? 'Night' : 'Day'}</div><div>${icon('traffic')}${m.traffic ? pick.traffic + ' cars' : 'No traffic'}</div></div></div>`);
+    const mini = h(`<div class="mapmini" style="background-image:url(${m.img})"><b>${esc(m.name)}</b><div class="tm"><div>${icon(pick.night ? 'moon' : 'sun')}${pick.night ? 'Night' : 'Day'}</div><div>${icon(pick.online ? 'globe' : 'traffic')}${pick.online ? 'Online' : m.traffic ? pick.traffic + ' cars' : 'No traffic'}</div></div></div>`);
     mini.onclick = () => go('maps', garage ? 'title' : from);
     left.appendChild(mini);
     const v = VEHICLES[pick.vehicle];
@@ -357,7 +359,7 @@ export function createMenu(api) {
       const el = h(`<div class="var ${(pick.paint ?? null) === c ? 'on' : ''}"><div class="sw" style="background:${swatch(pick.vehicle, c)}"></div><b>${esc(name)}</b></div>`);
       el.onclick = () => { pick.paint = c; render(); }; vars.appendChild(el);
     }
-    const cta = h(`<button class="cta" style="grid-column:1/-1">${icon('steer')}<span>Drive</span></button>`);
+    const cta = h(`<button class="cta" style="grid-column:1/-1">${icon('steer')}<span>${pick.online ? 'Drive online' : 'Drive'}</span></button>`);
     cta.onclick = () => api.launch({ ...pick });
     main.appendChild(cta);
     body.append(left, main);

@@ -2056,12 +2056,14 @@ CarAudio.setVolume(S.volume ?? 0.8);
 if (S.quality !== 'auto') setQuality(+S.quality); else applyQuality();
 // start a drive: same map (and traffic) -> swap the car and set the time live; otherwise save it all and
 // reload straight into the level (the go flag skips the title screen)
-async function launch({ map, vehicle, paint = null, night = false, traffic = AI_COUNT }) {
-  saveSettings({ ...loadSettings(), map, vehicle, paint, night, traffic });
-  if (map === MAP && (MAP !== 'flat' || traffic === AI_COUNT)) {
+async function launch({ map, vehicle, paint = null, night = false, traffic = AI_COUNT, online = false }) {
+  saveSettings({ ...loadSettings(), map, vehicle, paint, night, traffic, online });
+  if (map === MAP && (MAP !== 'flat' || online || traffic === AI_COUNT)) {
     const cur = menuApi.current();
     if (cur.vehicle !== vehicle || (cur.paint ?? null) !== (paint ?? null)) await swapVehicle(vehicle, paint);
     if (night !== ui.night) setNight(night);
+    if (online && net.status !== 'online' && net.status !== 'connecting') menuApi.net.connect();
+    if (!online && net.status !== 'offline') menuApi.net.disconnect();
     menu.close();
   } else { try { sessionStorage.setItem('carsim.go', '1'); } catch { /* fine: title screen then */ } location.reload(); }
 }
@@ -2130,6 +2132,25 @@ function fun(action) {
     blast: () => { for (const o of others) { const dx = o.car.pos.x - c.pos.x, dz = o.car.pos.z - c.pos.z, d = Math.hypot(dx, dz); if (d > 40) continue; const k = 30 * (1 - d / 40); o.car.vel = v3(o.car.vel.x + (dx / (d || 1)) * k, o.car.vel.y + k * 0.6, o.car.vel.z + (dz / (d || 1)) * k); o.car.angVel = v3((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4); } },
     rain: () => { others.forEach((o, i) => { resetVehicle(o, v3(c.pos.x + (Math.random() - 0.5) * 12, 0, c.pos.z + (Math.random() - 0.5) * 12), Math.random() * 6.28); o.car.pos.y += 12 + i * 4; if (o.ai) { o.ai.mode = 'crashed'; o.ai.wait = 8; } }); },
   })[action]?.();
+}
+// AI traffic isn't synced between players yet: online, it's taken out of the world; offline, back it comes
+let trafficParked = null;
+function setTrafficOn(on) {
+  if (!on && !trafficParked) {
+    trafficParked = traffic.slice();
+    for (const t of trafficParked) {
+      vehicles.splice(vehicles.indexOf(t), 1); cars.splice(cars.indexOf(t.car), 1);
+      scene.remove(t.group, t.shadow); if (t.inst) for (const k of ['FL', 'FR', 'RL', 'RR']) scene.remove(t.inst.wheels[k].root);
+      fire.extinguish(t); t.audio.setActive(false); t.audio.siren?.('off');
+    }
+    traffic.length = 0;
+  } else if (on && trafficParked) {
+    for (const t of trafficParked) {
+      vehicles.push(t); cars.push(t.car); scene.add(t.group, t.shadow); if (t.inst) for (const k of ['FL', 'FR', 'RL', 'RR']) scene.add(t.inst.wheels[k].root);
+      traffic.push(t);
+    }
+    trafficParked = null; respawnTraffic();
+  }
 }
 const menuApi = {
   boot: { map: MAP, traffic: AI_COUNT },
@@ -2210,7 +2231,7 @@ const net = new Net({
   leave: (id) => removeRemote(id),
   reset: () => { for (const id of [...remotes.keys()]) removeRemote(id); },
   state: (m) => { const v = remotes.get(m.id); if (v) v.remote.snap = { ...m, at: performance.now() }; },
-  status: () => menu.refresh?.(),
+  status: () => { setTrafficOn(net.status !== 'online' && net.status !== 'connecting'); menu.refresh?.(); },
 });
 const netUrl = () => loadSettings().server || DEFAULT_SERVER;
 menuApi.net = {
