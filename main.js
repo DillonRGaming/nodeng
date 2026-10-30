@@ -2173,6 +2173,7 @@ const menu = createMenu(menuApi);
 // network: smoothed towards where their last update says they are now (position + velocity x age),
 // snapped if they're far off. You can hit them; the damage shows on both cars on your screen.
 const remotes = new Map(); // player id -> vehicle
+const SURF_KEYS = Object.keys(SURFACES);
 const myName = () => loadSettings().name || (() => { const n = 'Driver' + Math.floor(1000 + Math.random() * 9000); saveSettings({ ...loadSettings(), name: n }); return n; })();
 const helloMsg = () => { const c = menuApi.current(); return { t: 'hello', name: myName(), vehicle: c.vehicle, paint: c.paint, map: MAP }; };
 async function addRemote(p) {
@@ -2213,7 +2214,14 @@ function updateRemotes(dt) {
     c.fwdBody = qRotate(c.q, v3(0, 0, 1)); c.leftBody = qRotate(c.q, v3(1, 0, 0)); c.up = qRotate(c.q, v3(0, 1, 0));
     c.speed = Math.hypot(s.v[0], s.v[1], s.v[2]);
     c.gear = s.g; c.eng.rpm = s.rpm; c.eng.load = s.th; c.input.throttle = s.th; c.input.brake = s.br;
-    c.wheels.forEach((w, i) => { w.steer = i < 2 ? s.st : 0; w.angle += (c.speed / c.P.wheelR) * dt * Math.sign(s.fw || 1); w.s = w.sStatic; });
+    c.wheels.forEach((w, i) => {
+      w.steer = i < 2 ? s.st : 0; w.angle += (c.speed / c.P.wheelR) * dt * Math.sign(s.fw || 1); w.s = w.sStatic;
+      // tyre state from the sender, so the local effects (smoke, skid marks, dust, squeal) run for them too
+      const ws = s.wh?.[i];
+      if (ws) { w.contact = !!ws[0]; w.slipSpeed = ws[1]; w.surface = SURF_KEYS[ws[2]] || 'asphalt'; w.Fz = ws[3]; w.Fx = w.Fy = 0; w.vx = c.speed; }
+      const h = qRotate(c.q, w.hard), up = c.up; // contact patch: below the wheel centre
+      w.cp = v3(c.pos.x + h.x - up.x * (w.s + c.P.wheelR), c.pos.y + h.y - up.y * (w.s + c.P.wheelR), c.pos.z + h.z - up.z * (w.s + c.P.wheelR));
+    });
     v.group.visible = true;
     if (v.kit && v.kit.on !== !!s.lt) v.kit.set(!!s.lt);
     if (v.remote.siren !== s.sr) { v.remote.siren = s.sr; v.audio.siren?.(['off', 'wail', 'yelp', 'hilo'][s.sr || 0]); }
@@ -2248,7 +2256,9 @@ function netTick(dt) {
   const c = car, r = (x) => Math.round(x * 1000) / 1000;
   net.send({ t: 'state', p: [r(c.pos.x), r(c.pos.y), r(c.pos.z)], q: [r(c.q.x), r(c.q.y), r(c.q.z), r(c.q.w)], v: [r(c.vel.x), r(c.vel.y), r(c.vel.z)], av: [r(c.angVel.x), r(c.angVel.y), r(c.angVel.z)],
     st: r((c.wheels[0].steer + c.wheels[1].steer) / 2), fw: Math.sign(c.fwdSpeed) || 1, g: c.gear, rpm: Math.round(c.eng.rpm), th: r(c.input.throttle), br: r(c.input.brake),
-    lt: me.kit?.on ? 1 : 0, sr: ui.siren || 0, hd: ui.headlights, fire: me.fire && me.fire.t > 0 ? 1 : 0 });
+    lt: me.kit?.on ? 1 : 0, sr: ui.siren || 0, hd: ui.headlights, fire: me.fire && me.fire.t > 0 ? 1 : 0,
+    // per wheel: on the ground, slip speed, surface, load - so tyre smoke / skids / dust show on their screens
+    wh: c.wheels.map((w) => [w.contact ? 1 : 0, r(w.slipSpeed), SURF_KEYS.indexOf(w.surface), Math.round(w.Fz)]) });
 }
 if (loadSettings().online) menuApi.net.connect(); // reconnect if you were online last time
 if (S.night) setNight(true);
