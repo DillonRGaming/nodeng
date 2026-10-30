@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Car Physics Sandbox</title>
+<style>
+  #perfGraph { display: block; width: 420px; height: 64px; border-radius: 4px; margin-bottom: 6px; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0c0d10; font-family: ui-sans-serif, system-ui, sans-serif; }
+  canvas { display: block; }
+  #hud { position: fixed; right: 16px; bottom: 16px; pointer-events: none; }
+  #telemetry { position: fixed; top: 12px; left: 12px; padding: 8px 10px; border-radius: 8px; background: rgba(18,20,24,0.7);
+    font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; color: #cfe9d9; white-space: pre; pointer-events: none; display: none; }
+  #load { display: none; }
+  #help { position: fixed; right: 18px; top: 16px; display: flex; align-items: center; gap: 8px; color: #e2e4e7; font: 600 12px "Segoe UI", system-ui, sans-serif; pointer-events: none; }
+  #help kbd { display: inline-grid; place-items: center; height: 22px; padding: 0 7px; border-radius: 4px; background: rgba(30,31,35,.85); color: #fff; font: 700 11px "Segoe UI", sans-serif; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="hud"></canvas>
+<div id="telemetry"><canvas id="perfGraph" width="420" height="64"></canvas><div id="telemText"></div></div>
+<div id="help"><kbd>Esc</kbd> Menu</div>
+<div id="load">Loading car…</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
