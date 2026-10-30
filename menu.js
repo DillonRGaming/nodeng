@@ -40,6 +40,7 @@ const I = { // stroke icons (24x24)
   steer: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M3.5 10.5l6 1m5 0l6-1M12 14.5V21"/>', traffic: '<rect x="8" y="2" width="8" height="20" rx="3"/><circle cx="12" cy="7" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="17" r="1.6"/>',
   flame: '<path d="M12 3c1 4 5 5 5 10a5 5 0 0 1-10 0c0-3 2-4 2-6 1 1 2 2 2 3 1-2 1-5 1-7z"/>', up: '<path d="M12 20V5m-6 6l6-6 6 6"/>', down: '<path d="M12 4v15m-6-6l6 6 6-6"/>',
   spin: '<path d="M20 12a8 8 0 1 1-3-6.2"/><path d="M20 4v5h-5"/>', burst: '<path d="M12 2v5m0 10v5M2 12h5m10 0h5M5 5l3.5 3.5m7 7L19 19M5 19l3.5-3.5m7-7L19 5"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
   search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>', chev: '<path d="M6 9l6 6 6-6"/>',
 };
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24">${I[n]}</svg>`;
@@ -180,6 +181,10 @@ const CSS = `
 #nx .funs { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin-top: 14px; }
 #nx .fun { display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 6px; border: 1px solid var(--nx-line); background: rgba(14,15,17,.7); color: #f1f2f4; font: 700 13px "Segoe UI", sans-serif; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; text-align: left; }
 #nx .fun:hover { background: #fff; color: var(--nx-ink); } #nx .fun .ic { width: 22px; height: 22px; }
+#nx .netstat { display: inline-flex; align-items: center; gap: 9px; margin: 4px 0 14px; padding: 7px 14px; border-radius: 20px; background: rgba(14,15,17,.7); border: 1px solid var(--nx-line); font-weight: 700; font-size: 13px; }
+#nx .netstat i { width: 9px; height: 9px; border-radius: 50%; background: #6b6f75; } #nx .netstat.online i { background: #3fdc7c; } #nx .netstat.connecting i { background: #f2c418; } #nx .netstat.failed i { background: #e8452f; }
+#nx .txt { width: 220px; padding: 8px 12px; border-radius: 5px; background: rgba(10,11,13,.7); border: 1px solid var(--nx-line); color: #fff; font: 600 14px "Segoe UI", sans-serif; outline: none; } #nx .txt:focus { border-color: rgba(255,255,255,.4); }
+#nx .plist { display: grid; gap: 6px; } #nx .plist div { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 5px; background: rgba(14,15,17,.6); border: 1px solid var(--nx-line); font-weight: 600; }
 #nx .btnrow { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 #nx .btn { padding: 9px 18px; border: 1px solid rgba(255,255,255,.2); border-radius: 20px; background: rgba(255,255,255,.04); color: #fff; font: 700 13px "Segoe UI", sans-serif; letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
 #nx .btn:hover { border-color: var(--nx-or); } #nx .btn.or { background: var(--nx-or); border-color: var(--nx-or); color: var(--nx-ink); }
@@ -248,7 +253,7 @@ export function createMenu(api) {
   const SCREENS = {
     title(s) {
       const shownTab = lastTab; lastTab = tab;
-      const TABS = [['play', 'Play'], ['garage', 'Garage'], ['settings', 'Settings'], ['controls', 'Controls']];
+      const TABS = [['play', 'Play'], ['garage', 'Garage'], ['online', 'Online'], ['settings', 'Settings'], ['controls', 'Controls']];
       s.innerHTML = header() + `<div class="tabs"><div class="key"><kbd>Q</kbd></div>${TABS.map(([k, l]) => `<div class="tab ${tab === k ? 'on' : ''}" data-tab="${k}">${l}</div>`).join('')}<div class="key"><kbd>E</kbd></div></div>`;
       s.querySelectorAll('[data-tab]').forEach((el) => (el.onclick = () => { tab = el.dataset.tab; render(); }));
       if (tab === 'play') {
@@ -271,7 +276,7 @@ export function createMenu(api) {
         if (shownTab !== 'garage') syncPick(); // entering the garage starts from what you're driving
         s.appendChild(carsBody(true));
       } else {
-        const p = h('<div class="glass section" style="flex:1"></div>'); (tab === 'settings' ? settingsSection : controlsSection)(p); s.appendChild(p);
+        const p = h('<div class="glass section" style="flex:1"></div>'); ({ settings: settingsSection, controls: controlsSection, online: onlineSection })[tab](p); s.appendChild(p);
       }
     },
     maps(s) {
@@ -315,7 +320,7 @@ export function createMenu(api) {
       s.innerHTML = header();
       const body = h('<div class="body"></div>');
       const rail = h('<div class="glass rail"></div>');
-      const ITEMS = [['vehicle', 'Vehicle', 'car'], ['env', 'Environment', 'sun'], ['settings', 'Settings', 'gear'], ['fun', 'Fun', 'flame'], ['controls', 'Controls', 'pad']];
+      const ITEMS = [['vehicle', 'Vehicle', 'car'], ['env', 'Environment', 'sun'], ['settings', 'Settings', 'gear'], ['online', 'Online', 'globe'], ['fun', 'Fun', 'flame'], ['controls', 'Controls', 'pad']];
       for (const [id, label, ic] of ITEMS) { const it = h(`<div class="ri ${section === id ? 'on' : ''}">${icon(ic)}<span>${label}</span></div>`); it.onclick = () => { section = id; render(); }; rail.appendChild(it); }
       rail.append(h('<div class="grow"></div>'), h('<div class="rsep"></div>'));
       for (const [label, ic, fn] of [['Recover', 'recover', () => { api.recover(); close(); }], ['Main menu', 'home', () => { tab = 'play'; go('title', 'title'); }], ['Resume', 'play', close]]) {
@@ -323,7 +328,7 @@ export function createMenu(api) {
       }
       body.appendChild(rail);
       if (section === 'vehicle') body.appendChild(vehiclePause());
-      else { const p = h('<div class="glass section" style="flex:1"></div>'); ({ env: envSection, settings: settingsSection, controls: controlsSection, fun: funSection })[section](p); body.appendChild(p); }
+      else { const p = h('<div class="glass section" style="flex:1"></div>'); ({ env: envSection, settings: settingsSection, controls: controlsSection, fun: funSection, online: onlineSection })[section](p); body.appendChild(p); }
       s.appendChild(body);
     },
   };
@@ -388,6 +393,25 @@ export function createMenu(api) {
     p.appendChild(b);
   }
   // Fun: one-click mischief; each action resumes straight into the game so you see it happen
+  // Online: connect to the relay server, your name, who else is on this map
+  function onlineSection(p) {
+    const N = api.net, st = N.status();
+    const label = { offline: 'Offline', connecting: 'Connecting…', online: 'Online', failed: 'Server not reachable' }[st];
+    p.innerHTML = `<h2>Online</h2><div class="netstat ${st}"><i></i>${label}${st === 'online' ? ` · ${N.count() + 1} on this map` : ''}</div>`;
+    const name = h(`<input class="txt" maxlength="20" value="${esc(N.name())}">`);
+    name.onkeydown = (e) => e.stopPropagation();
+    name.onchange = () => N.setName(name.value.trim());
+    p.appendChild(row('Your name', null, name));
+    if (st === 'online') {
+      p.insertAdjacentHTML('beforeend', '<h3>Players</h3>');
+      const list = [N.name() + ' (you)', ...N.players()];
+      p.appendChild(h(`<div class="plist">${list.map((n) => `<div>${icon('car')}<span>${esc(n)}</span></div>`).join('')}</div>`));
+    }
+    const b = h('<div class="btnrow"></div>');
+    const btn = h(`<button class="btn or">${st === 'online' || st === 'connecting' ? 'Disconnect' : 'Connect'}</button>`);
+    btn.onclick = () => { st === 'online' || st === 'connecting' ? N.disconnect() : N.connect(); render(); };
+    b.appendChild(btn); p.appendChild(b);
+  }
   function funSection(p) {
     const st = api.funState();
     p.innerHTML = '<h2>Fun</h2>';
@@ -462,13 +486,14 @@ export function createMenu(api) {
     pause(sec) { if (sec) section = sec; from = 'pause'; show('pause'); },
     escape() { if (!isOpen) { from = 'pause'; show('pause'); } else back(); },
     close,
+    refresh() { if (isOpen && !root.contains(document.activeElement?.closest?.('input') || null)) render(); },
     key(code) { // keys while the menu is open
       if (screen === 'pause' && code === 'KeyR') { api.recover(); close(); }
       if (screen === 'pause' && code === 'KeyH') { section = 'controls'; render(); }
       if (screen !== 'title') return;
-      const T = ['play', 'garage', 'settings', 'controls'];
-      if (code === 'KeyQ') { tab = T[(T.indexOf(tab) + 3) % 4]; render(); }
-      if (code === 'KeyE') { tab = T[(T.indexOf(tab) + 1) % 4]; render(); }
+      const T = ['play', 'garage', 'online', 'settings', 'controls'];
+      if (code === 'KeyQ') { tab = T[(T.indexOf(tab) + T.length - 1) % T.length]; render(); }
+      if (code === 'KeyE') { tab = T[(T.indexOf(tab) + 1) % T.length]; render(); }
     },
   };
 }

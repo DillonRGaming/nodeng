@@ -11,6 +11,7 @@ import { tearOff, spawnPiece, updateDebris, clearDebris, debrisCount, prewarmDeb
 import { LightRig } from './lights.js';
 import { addPoliceKit, POLICE_PAINT } from './police.js';
 import { FireSystem } from './fire.js';
+import { Net, DEFAULT_SERVER } from './net.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { createMenu, VEHICLES } from './menu.js';
 import { buildRoute, reverseRoute, AIDriver, signals, DRIVER_TYPES } from './ai.js';
@@ -1615,7 +1616,7 @@ function effects(v, dt) {
   v.shadow.rotation.y = yawOf(c);
   v.shadow.material.opacity = clamp(1 - (c.pos.y - gy - P.cgHeight) / 1.2, 0, 1) * (ui.night ? 0.6 : 1);
 
-  v.rig?.update(c, v.player ? ui : { headlights: ui.night ? 1 : 0, indicator: 0, hazard: !!v.ai?.hazard, night: ui.night }, camera, dt, v.group, gy);
+  v.rig?.update(c, v.player ? ui : v.remote ? { headlights: v.remote.head || 0, indicator: 0, hazard: false, night: ui.night } : { headlights: ui.night ? 1 : 0, indicator: 0, hazard: !!v.ai?.hazard, night: ui.night }, camera, dt, v.group, gy);
 
   const extra = { timeScale: ui.slowmo ? 0.25 : 1, squeal: clamp(squeal / 2.2, 0, 1.2), pitch: pitchN > 0 ? pitchW / pitchN : 0, scrub: clamp(scrub, 0, 1), wet: clamp(wet, 0, 1), crunch: clamp(crunch, 0, 1), hit, scrape: v.scrape };
   v.scrape *= Math.exp(-dt * 8);
@@ -1914,7 +1915,7 @@ function physicsStep() {
   readInput(DT);
   const police = me.kit ? { lights: me.kit.on, siren: !!ui.siren } : null;
   for (const v of vehicles) if (v.ai && (!v.far || lodTick)) v.ai.update(v.far ? DT * FAR_EVERY : DT, cars, car, police);
-  for (const c of cars) autoGearbox(c, DT);
+  for (const c of cars) if (!c.remote) autoGearbox(c, DT);
   prof.end(); prof.begin('car collision');
   const ev = collideCars(cars, DT); lastContacts = ev.length;
   onContacts(ev); // resolves impacts (velocity changes) before integrating
@@ -1923,7 +1924,7 @@ function physicsStep() {
   if (!dbgOff.soft) for (const v of vehicles) v.sb?.step(DT); // let crushed metal settle
   prof.end(); prof.begin('vehicle');
   applyGrab();
-  for (const v of vehicles) if (!v.far) stepCar(v.car); else if (lodTick) stepCar(v.car, DT * FAR_EVERY);
+  for (const v of vehicles) if (v.remote) continue; else if (!v.far) stepCar(v.car); else if (lodTick) stepCar(v.car, DT * FAR_EVERY); // other players' cars come from the network
   prof.end(); prof.begin('panels');
   for (const v of vehicles) stepDoors(v, DT);
   prof.end(); prof.begin('ground crush');
@@ -1967,6 +1968,8 @@ function frame(now) {
   }
   const simDt = ui.paused ? 0 : dt * (ui.slowmo ? 0.25 : 1);
   prof.begin('damage + sync');
+  updateRemotes(dt);
+  netTick(dt);
   for (const v of vehicles) { syncVisuals(v); checkDamage(v); v.sb?.upload(); }
   prof.end(); prof.begin('debris');
   updateDebris(simDt, cars);
@@ -2035,6 +2038,7 @@ async function swapVehicle(id, paint) {
     resetCar(car, v3(pos.x, 0, pos.z), yaw);
     saveSettings({ ...loadSettings(), vehicle: id, paint: def.police ? null : paint ?? null });
     toast(VEHICLES[id].name);
+    net.rehello();
   } catch (err) { console.error(err); toast('Vehicle failed to load: ' + err.message); }
   loadStatus.style.opacity = 0;
   swapping = false;
@@ -2142,6 +2146,90 @@ const menuApi = {
   cams: () => CAMS, cam: () => ui.cam, setCam: (c) => { ui.cam = c; },
 };
 const menu = createMenu(menuApi);
+
+// ---------------------------------------------------------------- multiplayer
+// Other players are full cars (model, lights, kit, siren, collisions) whose motion comes from the
+// network: smoothed towards where their last update says they are now (position + velocity x age),
+// snapped if they're far off. You can hit them; the damage shows on both cars on your screen.
+const remotes = new Map(); // player id -> vehicle
+const myName = () => loadSettings().name || (() => { const n = 'Driver' + Math.floor(1000 + Math.random() * 9000); saveSettings({ ...loadSettings(), name: n }); return n; })();
+const helloMsg = () => { const c = menuApi.current(); return { t: 'hello', name: myName(), vehicle: c.vehicle, paint: c.paint, map: MAP }; };
+async function addRemote(p) {
+  removeRemote(p.id);
+  const police = p.vehicle === 'police', model = police ? 'seltos' : MODELS[p.vehicle] ? p.vehicle : 'seltos';
+  const v = addVehicle({ name: p.name, paint: police ? POLICE_PAINT : p.paint ?? undefined, player: false, model, police });
+  v.remote = { id: p.id, name: p.name, snap: null, head: 0 };
+  v.car.remote = true; v.group.visible = false; resetCar(v.car, v3(0, 0, -5000), 0);
+  cars.push(v.car); remotes.set(p.id, v);
+  const tpl = await templateFor(model, v.car);
+  if (remotes.get(p.id) !== v) return; // left (or re-joined) while the model loaded
+  buildVisual(v, tpl);
+  if (audioStarted) v.audio.start();
+}
+function removeRemote(id) {
+  const v = remotes.get(id); if (!v) return;
+  remotes.delete(id);
+  vehicles.splice(vehicles.indexOf(v), 1); cars.splice(cars.indexOf(v.car), 1);
+  for (const o of cars) o.inContact?.delete(v.car);
+  fire.extinguish(v);
+  scene.remove(v.group, v.shadow);
+  if (v.inst) { for (const k of ['FL', 'FR', 'RL', 'RR']) scene.remove(v.inst.wheels[k].root); clearDebris(v.inst); }
+  v.rig?.dispose(); v.audio.siren?.('off'); v.audio.setActive(false);
+  v.nameTag?.remove();
+}
+const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+function updateRemotes(dt) {
+  for (const v of remotes.values()) {
+    const s = v.remote.snap, c = v.car;
+    if (!s) continue;
+    const age = Math.min(0.3, (performance.now() - s.at) / 1000);
+    const tx = s.p[0] + s.v[0] * age, ty = s.p[1] + s.v[1] * age, tz = s.p[2] + s.v[2] * age;
+    const far = Math.hypot(tx - c.pos.x, ty - c.pos.y, tz - c.pos.z) > 6, k = far ? 1 : 1 - Math.exp(-dt * 12);
+    c.pos = v3(c.pos.x + (tx - c.pos.x) * k, c.pos.y + (ty - c.pos.y) * k, c.pos.z + (tz - c.pos.z) * k);
+    _q1.set(c.q.x, c.q.y, c.q.z, c.q.w).slerp(_q2.set(s.q[0], s.q[1], s.q[2], s.q[3]), far ? 1 : k);
+    c.q = { x: _q1.x, y: _q1.y, z: _q1.z, w: _q1.w };
+    c.vel = v3(s.v[0], s.v[1], s.v[2]); c.angVel = v3(s.av[0], s.av[1], s.av[2]);
+    c.fwdBody = qRotate(c.q, v3(0, 0, 1)); c.leftBody = qRotate(c.q, v3(1, 0, 0)); c.up = qRotate(c.q, v3(0, 1, 0));
+    c.speed = Math.hypot(s.v[0], s.v[1], s.v[2]);
+    c.gear = s.g; c.eng.rpm = s.rpm; c.eng.load = s.th; c.input.throttle = s.th; c.input.brake = s.br;
+    c.wheels.forEach((w, i) => { w.steer = i < 2 ? s.st : 0; w.angle += (c.speed / c.P.wheelR) * dt * Math.sign(s.fw || 1); w.s = w.sStatic; });
+    v.group.visible = true;
+    if (v.kit && v.kit.on !== !!s.lt) v.kit.set(!!s.lt);
+    if (v.remote.siren !== s.sr) { v.remote.siren = s.sr; v.audio.siren?.(['off', 'wail', 'yelp', 'hilo'][s.sr || 0]); }
+    v.remote.head = s.hd;
+    if (!!s.fire !== !!v.fire) s.fire ? fire.ignite(v) : fire.extinguish(v);
+    // name tag over the car
+    if (!v.nameTag) { v.nameTag = document.createElement('div'); v.nameTag.className = 'nametag'; v.nameTag.textContent = v.remote.name; document.body.appendChild(v.nameTag); }
+    const sp = new THREE.Vector3(c.pos.x, c.pos.y + 1.6, c.pos.z).project(camera), on = sp.z < 1 && Math.abs(sp.x) < 1.1 && Math.abs(sp.y) < 1.1 && !menu.isOpen;
+    v.nameTag.style.display = on ? 'block' : 'none';
+    if (on) v.nameTag.style.transform = `translate(${((sp.x + 1) / 2) * innerWidth}px, ${((1 - sp.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+  }
+}
+const net = new Net({
+  join: (p) => { addRemote(p); },
+  leave: (id) => removeRemote(id),
+  reset: () => { for (const id of [...remotes.keys()]) removeRemote(id); },
+  state: (m) => { const v = remotes.get(m.id); if (v) v.remote.snap = { ...m, at: performance.now() }; },
+  status: () => menu.refresh?.(),
+});
+const netUrl = () => loadSettings().server || DEFAULT_SERVER;
+menuApi.net = {
+  status: () => net.status, count: () => net.count, name: myName, url: netUrl,
+  connect: () => { saveSettings({ ...loadSettings(), online: true }); net.connect(netUrl(), helloMsg); }, disconnect: () => { saveSettings({ ...loadSettings(), online: false }); net.close(); },
+  setName: (n) => { saveSettings({ ...loadSettings(), name: String(n).slice(0, 20) || myName() }); net.rehello(); },
+  players: () => [...remotes.values()].map((v) => v.remote.name),
+};
+// our state, 20 times a second
+let netAcc = 0;
+function netTick(dt) {
+  if (net.status !== 'online') return;
+  netAcc += dt; if (netAcc < 0.05) return; netAcc = 0;
+  const c = car, r = (x) => Math.round(x * 1000) / 1000;
+  net.send({ t: 'state', p: [r(c.pos.x), r(c.pos.y), r(c.pos.z)], q: [r(c.q.x), r(c.q.y), r(c.q.z), r(c.q.w)], v: [r(c.vel.x), r(c.vel.y), r(c.vel.z)], av: [r(c.angVel.x), r(c.angVel.y), r(c.angVel.z)],
+    st: r((c.wheels[0].steer + c.wheels[1].steer) / 2), fw: Math.sign(c.fwdSpeed) || 1, g: c.gear, rpm: Math.round(c.eng.rpm), th: r(c.input.throttle), br: r(c.input.brake),
+    lt: me.kit?.on ? 1 : 0, sr: ui.siren || 0, hd: ui.headlights, fire: me.fire && me.fire.t > 0 ? 1 : 0 });
+}
+if (loadSettings().online) menuApi.net.connect(); // reconnect if you were online last time
 if (S.night) setNight(true);
 { let go = false; try { go = sessionStorage.getItem('carsim.go') === '1'; sessionStorage.removeItem('carsim.go'); } catch { /* no session storage */ }
   if (!go) menu.title(); }
